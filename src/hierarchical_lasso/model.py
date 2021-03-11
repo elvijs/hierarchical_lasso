@@ -1,5 +1,8 @@
 """ This module implements the `HierarchicalLasso` class. """
+from typing import Optional, Dict
+
 import numpy as np
+import scipy.optimize
 
 Array = np.ndarray
 
@@ -13,7 +16,9 @@ class HierarchicalLasso:
     This is a linear model::
         y = Xw + e
 
-    We fit the parameters w and e by minimising the objective function::
+    TODO: describe how we obtain e
+
+    We fit the parameter w by minimising the objective function::
 
         0.5 * ||y - Xw||^2_2 + lambda * ||w||_1
 
@@ -26,11 +31,17 @@ class HierarchicalLasso:
             *,
             _lambda=1.0,
             max_iter=1000,
+            optimisation_method: str = "trust-constr",
+            optimisation_kwargs: Optional[Dict] = None,
     ):
+        # TODO document the arguments
         self._lambda = _lambda
         self._max_iter = max_iter
         self._w = None
         self._e = None
+
+        self._optimisation_method = optimisation_method
+        self._optimisation_kwargs = optimisation_kwargs or dict()
         # TODO: implement other scikit-learn convenience/speedup methods
 
     def fit(self, X: Array, y: Array) -> None:
@@ -56,6 +67,20 @@ class HierarchicalLasso:
         n_targets = y.shape[1]
 
         # TODO: implement
+
+        def objective(w: np.ndarray) -> float:
+            return 0.5 * np.linalg.norm(y - X @ w, ord=2) + _lambda * np.linalg.norm(w, ord=1)
+
+        # TODO add the Hessian and the Jacobian
+
+        w0 = np.zeros(shape=())
+        result = scipy.optimize.minimize(
+            objective,
+            w0,
+            method=self._optimisation_method,
+            **self._optimisation_kwargs,
+        )
+        # TODO: extract the optimised w and store, then implement predict
 
         # return self for chaining fit and predict calls - this is consistent with scikit-learn
         return self
