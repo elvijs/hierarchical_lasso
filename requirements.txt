@@ -1,5 +1,4 @@
 attrs==20.3.0
-ca-certificates==2020.12.5
 certifi==2020.12.5
 iniconfig==1.1.1
 joblib==1.0.1
