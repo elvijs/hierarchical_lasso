@@ -21,7 +21,8 @@ def setup_package():
         url=REPO_URL,
         download_url=REPO_URL,
         license="MIT",
-        packages=['src/hierarchical_lasso'],
+        packages=["hierarchical_lasso"],
+        package_dir={"": "src"},
         package_data={},
         install_requires=[
             "scipy>=1.6",
