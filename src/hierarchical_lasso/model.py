@@ -44,7 +44,7 @@ class HierarchicalLasso:
         self._optimisation_kwargs = optimisation_kwargs or dict()
         # TODO: implement other scikit-learn convenience/speedup methods
 
-    def fit(self, X: Array, y: Array) -> None:
+    def fit(self, X: Array, y: Array) -> "HierarchicalLasso":
         """Fit Hierarchical Lasso.
 
         That is, optimise the w and e parameters.
@@ -66,21 +66,48 @@ class HierarchicalLasso:
 
         n_targets = y.shape[1]
 
-        # TODO: implement
-
         def objective(w: np.ndarray) -> float:
-            return 0.5 * np.linalg.norm(y - X @ w, ord=2) + _lambda * np.linalg.norm(w, ord=1)
+            # TODO there might be ways of doing the matrix multiplication without the reshape;
+            #  this function will be called repeatedly, so perhaps better to create a flatter X outside
+            #  One for later once the correctness has been proved.
+            w_ = w.reshape((n_features, n_targets))
+            return 0.5 * np.linalg.norm(y - X @ w_, ord=2) + _lambda * np.linalg.norm(w_, ord=1)
+
+        # TODO: rescale X and y.
+        #  Use the offsets to compute the intercept and fit using the scaled versions
+        self._e = 42.
 
         # TODO add the Hessian and the Jacobian
 
-        w0 = np.zeros(shape=())
+        w0 = np.zeros(shape=(n_features * n_targets,))  # The objective function
         result = scipy.optimize.minimize(
             objective,
             w0,
             method=self._optimisation_method,
             **self._optimisation_kwargs,
         )
-        # TODO: extract the optimised w and store, then implement predict
+        # TODO: check convergence
+        self._w = result.x.reshape((n_features, n_targets))
 
         # return self for chaining fit and predict calls - this is consistent with scikit-learn
         return self
+
+    def predict(self, X):
+        """
+        Predict using the linear model Y = Xw + e.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Samples.
+
+        Returns
+        -------
+        C : array, shape (n_samples, n_targets)
+            Returns predicted values.
+        """
+        self._check_have_been_fit()
+        return X @ self._w + self._e
+
+    def _check_have_been_fit(self) -> None:
+        assert self._w is not None and self._e is not None
