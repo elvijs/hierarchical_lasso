@@ -1,8 +1,9 @@
 """ This module implements the `HierarchicalLasso` class. """
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
 import numpy as np
 import scipy.optimize
+from sklearn.preprocessing import normalize
 
 Array = np.ndarray
 
@@ -14,7 +15,7 @@ class HierarchicalLasso:
     Simon Lunagomez, see https://arxiv.org/abs/2001.07778.
 
     This is a linear model::
-        y = Xw + e
+        y = X @ w + e, where @ denotes the matrix multiplication
 
     TODO: describe how we obtain e
 
@@ -25,17 +26,23 @@ class HierarchicalLasso:
     """
     # TODO: classic Lasso in Scikit-learn weighs the L2 term by 1/(2 * n_samples).
     #  Perhaps we should be doing the same.
+    _LAMBDA_VALUE_MSG = (
+        "We have seen some numerical instability with smaller lambda, please avoid for now. "
+        "See the skipped model tests for details."
+    )
 
     def __init__(
             self,
             *,
-            _lambda=1.0,
+            lambda_=1.0,
             max_iter=1000,
             optimisation_method: str = "trust-constr",
             optimisation_kwargs: Optional[Dict] = None,
     ):
         # TODO document the arguments
-        self._lambda = _lambda
+        # assert lambda_ >= 0.4, self._LAMBDA_VALUE_MSG
+
+        self._lambda = lambda_
         self._max_iter = max_iter
         self._w = None
         self._e = None
@@ -64,22 +71,34 @@ class HierarchicalLasso:
         n_samples, n_features = X.shape
         _lambda = self._lambda
 
-        n_targets = y.shape[1]
+        try:
+            n_targets = y.shape[1]
+            if len(y.shape) > 2:
+                raise IndexError
+        except IndexError:
+            raise ValueError(f"Expected y to have shape (n_samples, n_targets), instead got {y.shape}")
+
+        # Description of the algorithm:
+        # 1. We'll normalise the data, so that y_n = y - mean(y) and X_n = (X - mean(X)) / SD(X)
+        # TODO: variance or SD?
+        # 2. solve y_n = X_n @ w_n and then de-normalise to get
+        #    y - mean(y) = (X - mean(X))/SD(X) @ w_n, or
+        #    y = X @ (w_n/SD(X)) + mean(y) - mean(X).w_n/SD(X) giving us
+        #    w = w_n/SD(X) and e = mean(y) - mean(X).w_n/SD(X)
+
+        X_normalised, y_normalised, X_offset, y_offset, X_scale = self._normalise_data(X, y)
 
         def objective(w: np.ndarray) -> float:
             # TODO there might be ways of doing the matrix multiplication without the reshape;
-            #  this function will be called repeatedly, so perhaps better to create a flatter X outside
-            #  One for later once the correctness has been proved.
+            #  this function will be called repeatedly, so perhaps better to create a flatter X outside.
             w_ = w.reshape((n_features, n_targets))
-            return 0.5 * np.linalg.norm(y - X @ w_, ord=2) + _lambda * np.linalg.norm(w_, ord=1)
+            return 0.5 * np.linalg.norm(y_normalised - X_normalised @ w_, ord=2) + _lambda * np.linalg.norm(w_, ord=1)
 
-        # TODO: rescale X and y.
-        #  Use the offsets to compute the intercept and fit using the scaled versions
-        self._e = 42.
+        w0 = np.zeros(shape=(n_features * n_targets,))
+        # Origin seems like the canonical starting point.
+        # Scipy expects a vector instead of a matrix, so that's what we provide.
 
         # TODO add the Hessian and the Jacobian
-
-        w0 = np.zeros(shape=(n_features * n_targets,))  # The objective function
         result = scipy.optimize.minimize(
             objective,
             w0,
@@ -87,7 +106,10 @@ class HierarchicalLasso:
             **self._optimisation_kwargs,
         )
         # TODO: check convergence
-        self._w = result.x.reshape((n_features, n_targets))
+
+        normalised_w = result.x.reshape((n_features, n_targets))
+        self._w = normalised_w / X_scale.reshape((n_features, 1))
+        self._e = y_offset - np.dot(X_offset, self._w)  # Note that self._w is already divided by X_scale
 
         # return self for chaining fit and predict calls - this is consistent with scikit-learn
         return self
@@ -110,4 +132,31 @@ class HierarchicalLasso:
         return X @ self._w + self._e
 
     def _check_have_been_fit(self) -> None:
-        assert self._w is not None and self._e is not None
+        assert (self._w is not None and self._e is not None), "Please call .fit() before attempting to predict."
+
+    @staticmethod
+    def _normalise_data(
+            X: Array,
+            y: Array,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Center and scale data. Do this in-place.
+
+        normalised_X = (X - X_offset) / X_scale
+        normalised_y = y - y_offset
+
+        X - X_offset and y - y_offset have 0 mean along axis 0.
+        X_scale is the L2 norm of X - X_offset.
+
+        This function also systematically makes y consistent with X.dtype.
+
+        :return: normalised_X, normalised_y, X_offset, y_offset, X_scale
+        """
+        y = np.asarray(y, dtype=X.dtype)
+
+        X_offset = np.average(X, axis=0)
+        X -= X_offset
+        X, X_scale = normalize(X, axis=0, copy=False, return_norm=True)
+        y_offset = np.average(y, axis=0)
+        y = y - y_offset
+
+        return X, y, X_offset, y_offset, X_scale
