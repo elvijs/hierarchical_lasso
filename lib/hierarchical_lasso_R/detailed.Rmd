@@ -1,0 +1,515 @@
+---
+title: "Three variable data and hierarchical model "
+output: pdf_document
+author: "Hugo Maruri-Aguilar"
+date: "08/04/2021"
+---
+
+This document has a small example to illustrate the lasso methodology and the `R` code I previously prepared. I run first standard lasso from library `lars` and then with in-house
+programs replicate the analysis. Then I run the hierarchical 
+versions (H, W, S) of lasso analysis. An Appendix describes the main functions used.
+
+# Data preparation
+
+This is the initial synthetic data set, stored in variable `DAT`. The column headers
+indicate the exponent term, i.e. `010` is $x_2$. Note that data columns are already centered around the mean. This centering of columns and response will remove the need to consider intercept in the rest of the analysis.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+source("C:/maruriwork/documents/bostonmanor/code/codigofuente.R")
+setwd("C:/maruriwork/documents/bostonmanor/examples/")
+DAT<-scan(file="smalldata.txt"); dim(DAT)<-c(4,7)
+DAT0<-DAT<-t(DAT)
+LD<-diag(rep(1,3));
+colnames(DAT)<-c(nombres(LM=LD),"y");
+```
+
+```{r}
+DAT 
+```
+
+Now add columns with interactions $x_1x_2$ and $x_1x_3$, which are also centered around their means. The matrix `DATX` has the regressors, while `DATY` has the response values. Column names of `DATX` are updated.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+DATY<-matrix(ncol=1,DAT[,4]); DATX<-DAT[,-4]
+DATX<-cbind(DATX,DAT[,1]*DAT[,2],DAT[,1]*DAT[,3]); 
+DATX<-scale(x=DATX,center=TRUE,scale=FALSE)
+## the model
+LD<-diag(rep(1,3)); LD<-rbind(LD,c(1,1,0),c(1,0,1))
+colnames(DATX)<-nombres(LM=LD); colnames(DATY)<-"y"
+```
+
+```{r}
+cbind(DATX,DATY)
+```
+
+This is the model, to be read as exponents of term in each row. Note absence of intercept.
+```{r}
+LD
+```
+
+\pagebreak
+
+# Initial LASSO analysis
+
+## Standard lasso analysis with function `lars` from the same library. 
+
+```{r,echo=!FALSE,warning=FALSE,message=FALSE}
+library(lars)
+A<-lars(x=DATX,y=DATY,type="lasso",normalize=FALSE,intercept=FALSE)
+```
+
+The rows in the table below correspond to breakpoints determined 
+by values of $\lambda$ at which there is a change 
+in the piecewise linear trajectories of coefficients. 
+The first column in the table are 
+these breakpoint values of $\lambda$; then the column entries are lasso
+estimates $\beta^L(\lambda)$, that is coefficients of model terms
+` `r colnames(DATX)` `; the last column is the criterion
+$L=||Y-X\beta||_2^2+\lambda||\beta||_1$. I did some post processing 
+of code outputs `A$beta` and `A$lambda` before showing the table.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+BBA<-cbind(c(A$lambda,0), (as.matrix(A$beta)) ,
+           A$RSS/2+c(A$lambda,0)*apply(abs(A$beta),1,sum)  )
+BBA<-BBA[nrow(BBA):1,]; colnames(BBA)<-nombracoeffsmatrix(LM = LD)
+round(BBA,4)
+```
+
+In standard Lasso like above, the maximum value of $\lambda$ for the
+analysis is determined by $\max_i |X^TY|_i$. This is the value at
+which all the coefficients shrink to zero. For
+these data, this is the maximum of {`r abs(t(DATX)%*%DATY)`}. 
+The breakpoints of $\lambda$ above are determined automatically by `lars` and note that the analysis 
+does not consider the hierarchical structure of the model terms.
+
+##  Lasso with `quadprog`, single orthant
+
+In preparation for later analyses, here is the least squares fit $\hat\beta$, corresponding to the coefficients in the first row in the table above. We also compute the vector of signs of $\hat\beta$, to be used in quadrant optimization.
+```{r,echo=!FALSE}
+bols<-solve(t(DATX)%*%DATX)%*%t(DATX)%*%DATY; t(bols) ## LSE estimate
+sign(bols)->c0; t(c0) ## the quadrant of the LSE estimate
+```
+
+```{r,echo=FALSE,eval=FALSE}
+## lm(DATY~DATX-1)$coefficients  ## Same OLS quantity, not evaluated
+c(bols*32) ## for nice printing
+```
+
+The lasso using the quadrant function. The output of the function is 
+the lasso estimate $\hat\beta^L(\lambda)$ and the achieved value $L$. 
+Here we do two computations of the table above for $\lambda=0$ and
+for $\lambda=`r A$lambda[length(A$lambda)]`$.
+
+```{r}
+minconoineq(CM=diag(c(c0)),XM=DATX,YM=DATY,lamm=0)
+minconoineq(CM=diag(c(c0)),XM=DATX,YM=DATY,lamm=A$lambda[length(A$lambda)])
+```
+
+\pagebreak
+
+## Lasso with `quadprog`, list of $\lambda$ and neighboring orthants
+
+Here we use the values of $\lambda$={`r sort(round(c(A$lambda,0),4))`} from the `lars` previous analysis. From the initial orthant (`r c0`), the function
+below computes neighbors by switching one orthant at a time:
+
+```{r}
+vecinos(c(c0))
+```
+
+In below, there are $|LM|+1$ optimizations for every value of $\lambda$. This is the size of the entry given in `GG`. Note that the absence of the parameter `AA`
+means the optimization is performed without constraints apart from the orthants.
+
+```{r,eval=!FALSE}
+round(lassocono(XM=DATX, YM=DATY, GG=vecinos(c(c0)), 
+                 lambdaval=sort(c(A$lambda,0))  )[,-c(2:6)],5)
+```
+
+
+## Lasso with `quadprog`, list of $\lambda$ and all orthants
+
+Using the same function, the search below uses all orthants. This is achieved by not specifying orthants `GG` and thus for every value of $\lambda$
+there are $2^{|LM|}$ optimizations. As above, the parameter `AA` was not used.
+
+```{r,eval=!FALSE}
+round(lassocono(XM=DATX, YM=DATY, 
+                 lambdaval=sort(c(A$lambda,0))  )[,-c(2:6)],5)
+```
+
+Note that without specifying constraints matrix `AA`, both approaches give 
+exactly the
+same results.
+
+
+\pagebreak
+
+## Timings for both calls 
+
+This initial example is by no means an expensive computation. Nevertheless, as there are 
+`r length(A$lambda)+1` values of $\lambda$, the first call (neighbor)
+does `r (length(A$lambda)+1)*(ncol(DATX)+1)` optimizations which is compared
+against `r (length(A$lambda)+1)*(2^ncol(DATX))` optimizations of the
+second call (full orthant). Thus for this example, the full orthant search is
+`r round((2^ncol(DATX))/(ncol(DATX)+1),3)`
+times more expensive than neighbor orthant search.
+
+
+```{r}
+library(tictoc)
+tic("Neighboring orthants")
+B0<-lassocono(XM=DATX, YM=DATY, GG=vecinos(c(c0)), lambdaval=sort(c(A$lambda,0)))
+toc()
+tic("All orthants")
+B0<-lassocono(XM=DATX, YM=DATY, lambdaval=sort(c(A$lambda,0)))
+toc()
+```
+
+\newpage
+
+# Hierarchical lasso (H)
+
+## The Hasse diagram
+
+The function `hassediagram` retrieves the dependences between terms. 
+Each row corresponds to model term; the columns are indexed by 
+variables and. In a given row, a nonzero entry indexes which term is 
+divisible by the corresponding row, and the position in the column is the
+remainder. 
+In other words, every non zero value corresponds to an edge
+in the diagram, and the edge is drawn between the term indexed by the 
+entry and the term inding the row.
+
+```{r}
+HD<-hassediagram(LM=LD); row.names(HD)<-nombres(LM=LD); HD
+```
+
+For the model of this example, the Hasse diagram has `r nrow(LD)` nodes (number of rows) and `r length(c(HD)[c(HD)!=0])` edges (number of non-zero entries).
+Of the nodes, `r sum(apply(X=HD!=0,MARGIN=1,FUN=sum)==2)` node (`r rownames(HD)[apply(X=HD!=0,MARGIN=1,FUN=sum)==2]`) has two descendant
+terms ; other `r sum(apply(X=HD!=0,MARGIN=1,FUN=sum)==1)` nodes 
+(`r rownames(HD)[apply(X=HD!=0,MARGIN=1,FUN=sum)==1]`)
+have only one descendant each and
+`r sum(apply(X=HD==0,MARGIN=1,FUN=prod))` nodes 
+(`r rownames(HD)[apply(X=HD==0,MARGIN=1,FUN=prod)==1]`)
+have no descendant nodes. 
+
+## Matrix of constraints for hierarchy $H$
+
+We now build the analysis using the $H$ set of constraints, stemming
+directly from the edges of the Hasse diagram. The function `restrict` 
+gives the 
+*S* type of hierarchy using option `type=1`; 
+the type *W* using option `type=2` and 
+the type *H* using option `type=3`; it 
+calls internally `hassediagram` so no need to compute the diagram
+beforehand. 
+
+```{r}
+AA<-restrict(LM=LD,type=3,weight=FALSE); colnames(AA)<-nombres(LM = LD); AA
+```
+
+
+### Constrained least squares orthant
+
+The first approach uses only the orthant from least squares (`r c0`).
+
+```{r}
+bcc<-minconoineq(CM=diag(c(c0)),XM = DATX, YM = DATY,AA = AA,lamm = 0)
+Ball<-matrix(nrow=1,c(0,bcc)); colnames(Ball)<-nombracoeffsmatrix(LM = LD)
+round(Ball,5); 
+```
+
+### Constrained least squares neighbors of ols orthant 
+
+We use the less expensive search over neighboring orthants of the ordinary least squares (`r c0`). 
+
+```{r}
+matrix(nrow=1,lassocono(XM=DATX, YM=DATY,AA=AA,GG=vecinos(c(c0)),lambdaval=0  )[,-c(2:6)])->BN
+colnames(BN)<-nombracoeffsmatrix(LM = LD); round(BN,4); 
+```
+
+### Constrained least squares all orthants
+
+Here we perform the expensive search over all the space composed of $2^`r nrow(LD)`$ orthants.
+
+```{r}
+matrix(nrow=1,lassocono(XM=DATX, YM=DATY, AA=AA, lambdaval=0  )[,-c(2:6)])->BA
+colnames(BA)<-nombracoeffsmatrix(LM = LD); round(BA,4); 
+```
+
+From the earlier computations, this example is an instance 
+where the initial least squares' orthant or neighboring orthants are 
+not neccesarily a good starting point as it is evident when compared against the full search.
+
+## Constrained lasso
+
+We now build lasso paths for the cases of neighbor orthants and full orthant. 
+
+
+### Searching neighbors of least squares orthant
+
+We check the last result using the less expensive search over neighboring orthants of the ordinary least squares orthant (`r c0`). 
+
+```{r}
+round(lassocono(XM=DATX, YM=DATY, AA=AA, GG=vecinos(c(c0)), 
+                nlambda=7,lmax=16   )[,-c(2:6)],5)->LNE
+colnames(LNE)<-nombracoeffsmatrix(LM = LD);  LNE
+```
+
+### Searching all orthants
+
+This is the same call of `lassocono` as above except that when the argument `GG` is not given, the search is 
+over  the space composed of $2^`r nrow(LD)`$ orthants.
+
+```{r}
+round(lassocono(XM=DATX, YM=DATY, AA=AA,
+                 nlambda=7, lmax=22  )[,-c(2:6)],5)->LAL
+colnames(LAL)<-nombracoeffsmatrix(LM = LD);  LAL
+```
+
+\pagebreak
+
+## Plotting the results
+
+The custom built function `graficalo` is used to plot the paths for the two cases, only neighboring orthants and all orthants. To improve the path plotted, we use more values of $\lambda$ than earlier. These are computed with function `seqq`. 
+
+```{r,fig.height=3,fig.width=7}
+par(mar=c(4,4,1,1),mfrow=c(1,2))
+graficalo(Coeffs=lassocono(XM=DATX, YM=DATY, AA=AA, GG=vecinos(c(c0)), 
+                  lambdaval=seqq(maximo=16,cuantos=30)   )[,-c(2:6)], LM=LD,
+                  titulo="H neighboring orthants")
+graficalo(Coeffs=lassocono(XM=DATX, YM=DATY, AA=AA, 
+                lambdaval=seqq(maximo=16,cuantos=30)   )[,-c(2:6)], LM=LD,
+                 titulo="H all orthants")
+```
+
+We can rescale the restriction matrix by multiplying its positive entries
+by a factor. Using a factor bigger than one enlarges the search region and we would 
+expect less differences between searching in neighboring orthants against searching over all orthants. This is done below for the factor equal to two and to ten.
+
+```{r,fig.height=3,fig.width=7}
+AA2<-rescale(MAT=AA,factor=2); AA10<-rescale(MAT=AA,factor=10); 
+par(mar=c(4,4,1,1),mfrow=c(1,2))
+graficalo(Coeffs=lassocono(XM=DATX, YM=DATY,  AA=AA2, GG=vecinos(c(c0)), 
+          lambdaval=seqq(maximo=24,cuantos=30)   )[,-c(2:6)], LM=LD,
+          titulo="H neighboring orthants")
+graficalo(Coeffs=lassocono(XM=DATX, YM=DATY,   AA=AA2, 
+           lambdaval=seqq(maximo=24,cuantos=30)   )[,-c(2:6)], LM=LD,
+           titulo="H all orthants")
+```
+
+```{r,fig.height=3,fig.width=7}
+par(mar=c(4,4,1,1),mfrow=c(1,2))
+graficalo(Coeffs=lassocono(XM=DATX, YM=DATY, AA=AA10, GG=vecinos(c(c0)), 
+          lambdaval=seqq(maximo=36,cuantos=30)   )[,-c(2:6)], LM=LD,  
+          titulo="H neighboring orthants")
+graficalo(Coeffs=lassocono(XM=DATX, YM=DATY, AA=AA10, 
+          lambdaval=seqq(maximo=36,cuantos=30)   )[,-c(2:6)], LM=LD,  
+           titulo="H all orthants")
+```
+
+In this latter case with factor equal to ten the differences between trajectories in the 
+two cases become negligible. \pagebreak
+
+
+Below we exhibit the constraint matrix for this latter case with factor equal to ten, 
+```{r}
+AA10
+```
+
+Here are the Lasso paths for this last scaling factor of ten and the two 
+ cases (neighboring orthants and all orthants). The paths are largely similar although
+ they are not equal.
+
+```{r}
+lassocono(XM=DATX, YM=DATY, AA=AA10, GG=vecinos(c(c0)),
+                lambdaval=seqq(maximo=36,cuantos=4)   )[,-c(2:6)]->BBN
+colnames(BBN)<-nombracoeffsmatrix(LM = LD);  
+lassocono(XM=DATX, YM=DATY, AA=AA10, 
+                lambdaval=seqq(maximo=36,cuantos=4)   )[,-c(2:6)]->BBA
+colnames(BBA)<-nombracoeffsmatrix(LM = LD);  
+round(BBN,5) ## Neighboring orthants
+round(BBA,5) ## ALL orthants
+```
+
+\pagebreak
+
+# Weak hierarchical Lasso (W)
+
+Here is the constraint matrix for the same model and weak hierarchy. This matrix is obtained with the function `restrict` and setting `type=2`. In this case, the flag `weight=TRUE` 
+gives matrix with non zero entries being $\pm 1$. We also give the scaled version of it.
+
+```{r}
+restrict(LM=LD,type=2,weight=TRUE)->AA; colnames(AA)<-nombres(LM=LD); AA
+rescale(MAT=restrict(LM=LD,type=2,weight=TRUE),factor=10)->AA10; colnames(AA10)<-nombres(LM=LD); AA10
+```
+
+The following two paths are for neighboring orthants and for computation using all orthants.
+The analyses coincide.
+
+
+```{r}
+lassocono(XM=DATX, YM=DATY, GG=vecinos(c(c0)), AA=AA, 
+                lambdaval=seqq(maximo=38,cuantos=4)   )[,-c(2:6)]->BBN
+lassocono(XM=DATX, YM=DATY,  AA=AA, 
+                lambdaval=seqq(maximo=38,cuantos=4)   )[,-c(2:6)]->BBA
+colnames(BBN)<-nombracoeffsmatrix(LM = LD); colnames(BBA)<-nombracoeffsmatrix(LM = LD);
+round(BBN,5) ## neighbor orthant
+round(BBA,5) ## all orthants
+```
+
+\pagebreak
+
+# Strong hierarchical Lasso (S)
+
+This is achieved with the constraint matrix built with `restrict` and `type=1`. The flag
+`weight=TRUE` is used as in the weak hierarchy case.
+
+
+```{r}
+restrict(LM=LD,type=1,weight=TRUE)->AA; colnames(AA)<-nombres(LM=LD); AA
+rescale(MAT=restrict(LM=LD,type=1,weight=TRUE),factor=100)->AA10; colnames(AA10)<-nombres(LM=LD); AA10
+```
+
+Below are two paths built using the matrix `AA` and the two searches over "neighbor orthants" and over "all orthants". It is clear in the plots the suboptimality of neighbor search.
+
+```{r}
+lassocono(XM=DATX, YM=DATY, GG=vecinos(c(c0)), AA=AA, 
+                lambdaval=seqq(maximo=21.5,cuantos=20)   )[,-c(2:6)]->BBN
+lassocono(XM=DATX, YM=DATY,  AA=AA, 
+                lambdaval=seqq(maximo=21.5,cuantos=20)   )[,-c(2:6)]->BBA
+par(mar=c(4,4,1,1),mfrow=c(1,2)) 
+graficalo(Coeffs=BBN,titulo="Neighbor orthant",LM=LD)
+graficalo(Coeffs=BBA,titulo="Neighbor orthant",LM=LD)
+```
+
+# Appendix 
+
+## Data format
+
+Assume that there are $n$ observations in which a response variable was collected and there are measurements of $d$ covariates available for every value of the response variable.
+The data for this analysis consists of three objects.
+
+The **response** vector $Y$ is a column
+vector of $n$ rows; there is a **design-model matrix** $X$ of $n$ rows and with $p$ columns.
+The columns of $X$ are computed by evaluating polynomial terms at each of covariate values.
+These $p$ columns of $X$ correspond to the terms in the polynomial **model** $LM$. 
+This model is allocated in a matrix of $p$ rows and with $d$ columns, where $d$ is the number of covariates, and the entries of this matrix are integer numbers which are the exponents that create the polynomial model terms. 
+
+
+## Main functions from the file `codigofuente.r`
+
+The file has many different utilities, some for creating and handling  polynomial models,
+other functions are for handling the model terms, other for plotting analyses. Here I
+describe the main functions used for analysis.
+
+
+## `minconoineq` 
+
+This is the main function, based upon the function `solve.QP` from library `quadprog`. 
+For a given model data matrix `XM` with response vector `YM`, and choice of
+regularization parameter `lamm` (i.e. $\lambda$), 
+the function `minconoineq` 
+ performs a quadratic minimization over the orthant given by  diagonal of matrix `CM`.
+The objective function is that orthant part of 
+standard lasso criterion $$L=||Y-X\beta||_2^2+\lambda||\beta||_1,$$ subject
+to constraints in $\beta$ imposed by the constraint matrix `AA` and to the orthant
+of `CM`.
+The entries of `CM` that identify orthant may be not just $\pm 1$ but could be zero
+as well, hence the function has steps that prevent the matrices involved having
+zero rows/columns.
+
+The function retrieves the coefficient $\hat\beta^L(\lambda)$ over the specified orthant,
+together with the minimal objective value achieved.
+
+## `minconoineqquadr`
+
+This function is a wrapper that runs `minconoineq` over several quadrants specified
+by the matrix `GG`. The other entries are `XM`, `YM`, `lamm` and `AA`. If `GG` is not
+specified, this function performs a computation over all possible orthants which are
+$2^{|LM|}$ (recall that columns of `XM` correspond to terms in $LM$).
+
+If the flag `minimize` is set to `TRUE`, then the function retrieves the best 
+result of `minconoineq` over the specified set of orthants `GG`. By default,
+`minimize=FALSE` and the function retrieves all the results, one for each orthant.
+
+## `lassocono`
+
+This is a wrapper that runs `minconoineqquadr` (and consequently  `minconoineq`) over 
+a choice of values of $\lambda$
+specified by one of two ways. The user can give a list of specific
+values in `lambdaval`; alternatively the user specifies `lmin`, `lmax` and `nlambda`
+to construct a uniformly spaced sequence of values to use. Other entries
+`XM`, `YM`, `AA` and `GG` are as per inputs of `minconoineqquadr`. 
+
+The output is the collection of coefficients of the model that minimizes over choice
+of orthants `GG`. The output is slightly verbose as for every $\lambda$, it includes
+the value of $\lambda$, which orthant was the minimizer, the estimate 
+$\hat\beta^L(\lambda)$ and the minimal objective value achieved.
+
+## `hassediagram`
+
+This function creates the simplified Hasse diagram. Its input is `LM`,
+the matrix in which each row is a term and entries are exponents of the
+model.
+
+Each row of the output corresponds to a term (row) in `LM`. In each row,
+nonzero numbers are pointers (indexes) which other model terms depend on 
+the current row, via simple product of unit exponents and thus the number
+of columns equals the number of variables (in turn, number of columns in `LM`).
+
+## `restrict`
+
+This function generates the matrix of restrictions to be used as input `AA` 
+in the above functions. The following are inputs for this function, `LM` which is the
+specification of polynomial terms in the model, and `type` that determines
+the hierarchy to be used. If `type=1` strong hierarchy (S) adding over descendants
+is done, if `type=2` then return weak hierarchy (W) adding over parents and
+otherwise `type=3` return general strong hierarchy (H). The other
+input is the flag `weight`. By default `weight=TRUE` and all non-zero entries 
+are $\pm 1$. This flag does not matter for `type=3`.
+This function calls automatically `hassediagram` so no need to create a
+Hasse diagram separately.
+
+The output is a matrix with the weights for the inequalities. It has as many
+columns as the terms (rows) in `LM` and as many rows as the type of hierarchy.
+If (S,  `type=1`) the number of rows is the number of nodes with are parents;
+for (W,  `type=2`) it is the number of nodes which are descendants, and
+for (H,  `type=3`) it is the number of edges in the Hasse diagram.
+
+## `rescale`
+
+This function is to scale the positive entries of matrix `MAT`. Depending on 
+the value of input `factor`, it is possible
+to make the search region less constrained for `factor` bigger than one and
+more constrained for such value less than one. Usually we want to make the analysis
+less constrained. A logical flag `override` controls whether this output will be forced
+to be exactly equal to `factor`, otherwise it is the product of the maximum positive
+entry by `factor`.
+
+The output is the scaled matrix `MAT` that will be used 
+as matrix of restrictions `AA`.
+
+## `vecinos`
+
+This function takes as input `CC` a vector of entries taking values of $\{0,\pm 1\}$.
+
+The output is a matrix output with as many columns as entries in `CC` and the
+rows are sign changes of `CC` one at a time, including the
+original `CC`. This is to be used in a simple, low cost orthant search. This
+is the method refered to as the 'neighbor orthant' method.
+
+
+## `graficalo`
+
+This is a call to plot the lasso path, stemming from the output of `lassocono`. 
+Its main input
+is `Coeffs` which by default (controlled by flag `extras`) is assumed to have $\lambda$ in 
+the first column then columns for the
+coefficients $\hat\beta^L(\lambda)$ and in the final column the criterion $L$.
+If the table for `Coeffs` only has the coefficients $\hat\beta^L(\lambda)$ 
+available, the flag `extras` should be set to `FALSE`.
+
+By default the path are plotted against percentage of shrinkage $s=s(\lambda)$,
+but they could be plotted against $\lambda$ by setting the flag `plotlambda=TRUE`.
+The flag `simplito` by default allows for very simple axis labels but could
+create more complex labels if desired by switching to `simplito=TRUE`.
+If model `LM` is given, the plot adds labels to each path. 
