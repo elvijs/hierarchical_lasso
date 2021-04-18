@@ -37,25 +37,34 @@ def test_y_vector__throws_value_error() -> None:
 
 
 @pytest.mark.parametrize("X, y, lambda_, true_w, true_e", [
+    # TODO: add a single sample case?
     (
-        np.array([[1.]]),
-        np.array([[2.]]),
+        np.array([0., 1.]).reshape(2, 1),
+        np.array([0., 1.]).reshape(2, 1),
         0.,
-        np.array([[.5]]),
-        np.array([[0.]]),
+        np.array([[1.]]),
+        np.array([0.]),
     ),
     (
         np.array([1., 2.]).reshape(2, 1),
-        np.array([1., 2.]).reshape(2, 1),
+        np.array([0., 1.]).reshape(2, 1),
         0.,
         np.array([[1.]]),
-        np.array([[0.]]),
+        np.array([-1.]),
+    ),
+    (
+        np.array([0., 1.]).reshape(2, 1),
+        np.array([0., 1.]).reshape(2, 1),
+        5.,
+        np.array([[3.]]),
+        np.array([-1.]),
     ),
 ])
 def test_analytically_solvable_cases(X: Array, y: Array, lambda_: float, true_w: Array, true_e: Array) -> None:
+    # The true values above can be easily verified by pen and paper
     model = HierarchicalLasso(lambda_=lambda_).fit(X, y)
     np.testing.assert_array_almost_equal(model._w, true_w)
-    np.testing.assert_array_equal(model._e, true_e)
+    np.testing.assert_array_almost_equal(model._e, true_e)
 
 
 @pytest.mark.parametrize("lambda_", np.linspace(0., 5., 10))
