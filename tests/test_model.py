@@ -7,6 +7,9 @@ from hierarchical_lasso import HierarchicalLasso
 from hierarchical_lasso.model import Array
 
 
+DECIMALS_TOLERANCE = 3
+
+
 def test_can_construct() -> None:
     HierarchicalLasso()
 
@@ -67,7 +70,7 @@ def test_analytically_solvable_cases(X: Array, y: Array, lambda_: float, true_w:
     np.testing.assert_array_almost_equal(model._e, true_e)
 
 
-@pytest.mark.parametrize("lambda_", np.linspace(0., 5., 10))
+@pytest.mark.parametrize("lambda_", np.linspace(0., 10., 11))
 @pytest.mark.parametrize("X, y", [
     # Degenerate data
     (np.ones(shape=(4, 3)), np.ones(shape=(4, 2))),
@@ -75,7 +78,7 @@ def test_analytically_solvable_cases(X: Array, y: Array, lambda_: float, true_w:
     # Random data with a few different shapes
     (np.random.rand(4, 3), np.random.rand(4, 2)),
     (np.random.rand(10, 5), np.random.rand(10, 1)),
-    (np.random.rand(4, 3) * 12., np.random.rand(4, 2) * 34.),  # check we can do with bigger numbers
+    (np.random.rand(4, 3) * 12., np.random.rand(4, 2) * 34.),  # check we can deal with bigger numbers
     (np.random.rand(10, 5) + 56., np.random.rand(10, 1) + 78.),
 ])
 def test_equivalence_with__scikit_learn_lasso(lambda_: float, X: Array, y: Array) -> None:
@@ -88,9 +91,21 @@ def test_equivalence_with__scikit_learn_lasso(lambda_: float, X: Array, y: Array
 
     # We use slightly different shape conventions to scikit-learn,
     # so flattening arrays for comparison
-    np.testing.assert_array_equal(scikit_model.coef_.T.flatten(), model._w.flatten())
-    np.testing.assert_array_equal(scikit_model.intercept_.flatten(), model._e.flatten())
-    np.testing.assert_array_equal(scikit_prediction.flatten(), prediction.flatten())
+    np.testing.assert_array_almost_equal(
+        scikit_model.coef_.T.flatten(),
+        model._w.flatten(),
+        decimal=DECIMALS_TOLERANCE,
+    )
+    np.testing.assert_array_almost_equal(
+        scikit_model.intercept_.flatten(),
+        model._e.flatten(),
+        decimal=DECIMALS_TOLERANCE,
+    )
+    np.testing.assert_array_almost_equal(
+        scikit_prediction.flatten(),
+        prediction.flatten(),
+        decimal=DECIMALS_TOLERANCE,
+    )
 
 
 # Fixtures
