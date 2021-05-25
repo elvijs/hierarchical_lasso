@@ -38,12 +38,14 @@ class HierarchicalLasso:
             max_iter=1000,
             optimisation_method: str = "trust-constr",
             optimisation_kwargs: Optional[Dict] = None,
+            normalise: bool = False,
     ):
         # TODO document the arguments
         # assert lambda_ >= 0.4, self._LAMBDA_VALUE_MSG
 
         self._lambda = lambda_
         self._max_iter = max_iter
+        self._normalise = normalise
         self._w = None
         self._e = None
 
@@ -86,7 +88,7 @@ class HierarchicalLasso:
         #    y = X @ (w_n/SD(X)) + mean(y) - mean(X).w_n/SD(X) giving us
         #    w = w_n/SD(X) and e = mean(y) - mean(X).w_n/SD(X)
 
-        X_normalised, y_normalised, X_offset, y_offset, X_scale = self._normalise_data(X, y)
+        X_normalised, y_normalised, X_offset, y_offset, X_scale = self._normalise_data(X, y, scale=self._normalise)
 
         def objective(w: np.ndarray) -> float:
             # TODO there might be ways of doing the matrix multiplication without the reshape;
@@ -138,8 +140,9 @@ class HierarchicalLasso:
     def _normalise_data(
             X: Array,
             y: Array,
+            scale: bool,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Center and scale data. Do this in-place.
+        """Center and optionally scale datd.
 
         normalised_X = (X - X_offset) / X_scale
         normalised_y = y - y_offset
@@ -151,12 +154,18 @@ class HierarchicalLasso:
 
         :return: normalised_X, normalised_y, X_offset, y_offset, X_scale
         """
-        y = np.asarray(y, dtype=X.dtype)
+        y_copy = y.copy()
+        y_copy = np.asarray(y_copy, dtype=X.dtype)
+        X_copy = X.copy()
 
-        X_offset = np.average(X, axis=0)
-        X -= X_offset
-        X, X_scale = normalize(X, axis=0, copy=False, return_norm=True)
-        y_offset = np.average(y, axis=0)
-        y = y - y_offset
+        X_offset = np.average(X_copy, axis=0)
+        X_copy -= X_offset
+        if scale:
+            X_copy, X_scale = normalize(X_copy, axis=0, copy=False, return_norm=True)
+        else:
+            X_scale = np.ones_like(X_offset)
 
-        return X, y, X_offset, y_offset, X_scale
+        y_offset = np.average(y_copy, axis=0)
+        y_copy -= y_offset
+
+        return X_copy, y_copy, X_offset, y_offset, X_scale
