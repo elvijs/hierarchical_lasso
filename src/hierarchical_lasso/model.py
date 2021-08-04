@@ -1,5 +1,5 @@
 """ This module implements the `HierarchicalLasso` class. """
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Callable
 
 import numpy as np
 import scipy.optimize
@@ -26,10 +26,6 @@ class HierarchicalLasso:
     """
     # TODO: classic Lasso in Scikit-learn weighs the L2 term by 1/(2 * n_samples).
     #  Perhaps we should be doing the same.
-    _LAMBDA_VALUE_MSG = (
-        "We have seen some numerical instability with smaller lambda, please avoid for now. "
-        "See the skipped model tests for details."
-    )
 
     def __init__(
             self,
@@ -40,9 +36,6 @@ class HierarchicalLasso:
             optimisation_kwargs: Optional[Dict] = None,
             normalise: bool = False,
     ):
-        # TODO document the arguments
-        # assert lambda_ >= 0.4, self._LAMBDA_VALUE_MSG
-
         self._lambda = lambda_
         self._max_iter = max_iter
         self._normalise = normalise
@@ -90,12 +83,7 @@ class HierarchicalLasso:
 
         X_normalised, y_normalised, X_offset, y_offset, X_scale = self._normalise_data(X, y, scale=self._normalise)
 
-        def objective(w: np.ndarray) -> float:
-            # TODO there might be ways of doing the matrix multiplication without the reshape;
-            #  this function will be called repeatedly, so perhaps better to create a flatter X outside.
-            w_ = w.reshape((n_features, n_targets))
-            return 0.5 * np.linalg.norm(y_normalised - X_normalised @ w_, ord=2) + _lambda * np.linalg.norm(w_, ord=1)
-
+        objective = unconstrained_lasso_objective(X_normalised, y_normalised, _lambda)
         w0 = np.zeros(shape=(n_features * n_targets,))
         # Origin seems like the canonical starting point.
         # Scipy expects a vector instead of a matrix, so that's what we provide.
@@ -169,3 +157,22 @@ class HierarchicalLasso:
         y_copy -= y_offset
 
         return X_copy, y_copy, X_offset, y_offset, X_scale
+
+
+def unconstrained_lasso_objective(
+        X: np.ndarray,
+        y: np.ndarray,
+        lambda_: float,
+) -> Callable[[np.ndarray], float]:
+    n_samples, n_features = X.shape
+    n_targets = y.shape[1]
+
+    def objective(w: np.ndarray) -> float:
+        # TODO there might be ways of doing the matrix multiplication without the reshape;
+        #  this function will be called repeatedly, so perhaps better to create a flatter X outside.
+        w_ = w.reshape((n_features, n_targets))
+        norm_2 = np.linalg.norm(y - X @ w_, ord=2) / (2 * n_samples)
+        norm_1 = lambda_ * np.linalg.norm(w_, ord=1)
+        return norm_1 + norm_2
+
+    return objective
